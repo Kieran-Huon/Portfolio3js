@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import {
+  createStylizedSmoke
+} from './SmokeSystem.js';
+
+
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
@@ -19,6 +24,14 @@ dirLight.position.set(100, 200, 100);
 scene.add(dirLight);
 
 new OrbitControls(camera, renderer.domElement);
+
+// Loader DOM
+const loaderScreen = document.getElementById('loader-container');
+
+
+function hideLoader() {
+  loaderScreen.style.display = 'none';
+}
 
 function createStars(count) {
   const starGeometry = new THREE.BufferGeometry();
@@ -42,18 +55,29 @@ let isWalking = false;
 let isLaunching = false;
 let isPetting = false;
 let launchStartTime = 0;
-let smokeParticles = [];
+// let smokeParticles = [];
 const keysPressed = { forward: false, backward: false, left: false, right: false };
 const planets = [];
 const orbitRadius = 150;
 const walkRadius = 10;
-let theta = 0;
+let modelsToLoad = 12;
+let modelsLoaded = 0;
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let targetToReach = null;
+let wolf = null; // on le stockera ici
+
+
+function checkLoadingComplete() {
+  modelsLoaded++;
+  if (modelsLoaded >= modelsToLoad) hideLoader();
+}
 
 const planetConfigs = [
-  { name: 'Earth', file: 'Earth.glb', scale: 10, orbitOffset: 0, orbitSpeed: 0.001 },
+  { name: 'Earth', file: 'Planet-9g1aIbfR9Y.glb', scale: 10, orbitOffset: 0, orbitSpeed: 0.001 },
   { name: 'Jupiter', file: 'Jupiter.glb', scale: 0.4, orbitOffset: 20, orbitSpeed: 0.0008 },
-  { name: 'Mars', file: 'Mars.glb', scale: 0.25, orbitOffset: 40, orbitSpeed: 0.0012 },
-  { name: 'Neptune', file: 'Neptune.glb', scale: 0.35, orbitOffset: 60, orbitSpeed: 0.0009 },
+  { name: 'Mars', file: 'Planet-5zzi8WUMXj.glb', scale: 10, orbitOffset: 40, orbitSpeed: 0.0012 },
+  { name: 'Neptune', file: 'Planet-18Uxrb2dIc.glb', scale: 10, orbitOffset: 60, orbitSpeed: 0.0009 },
   { name: 'Saturn', file: 'Saturn.glb', scale: 50, orbitOffset: 80, orbitSpeed: 0.0007 },
   { name: 'Venus', file: 'Venus.glb', scale: 0.3, orbitOffset: 100, orbitSpeed: 0.0011 }
 ];
@@ -70,21 +94,26 @@ planetConfigs.forEach((config, i) => {
     };
     scene.add(planet);
     planets.push(planet);
+    checkLoadingComplete();
   });
 });
+let wavingMixer, wavingAction;
 
 loader.load('/models/Floating_Island.glb', gltf => {
   island = gltf.scene;
   island.scale.set(20, 20, 20);
   island.position.set(0, -24, 0);
   scene.add(island);
+  checkLoadingComplete();
 
   loader.load('/models/Wolf.glb', wolfGltf => {
-    const wolf = wolfGltf.scene;
+    wolf = wolfGltf.scene;
     wolf.scale.set(2, 2, 2);
     wolf.position.set(15, -9, -5);
     scene.add(wolf);
+    checkLoadingComplete();
   });
+  
 
   const rockPositions = [
     [-32.88, -9, 7.99],
@@ -125,27 +154,26 @@ loader.load('/models/Floating_Island.glb', gltf => {
     rover.position.set(-22, -0.5, -5);
     rover.rotation.y = Math.PI / 2.5;
     scene.add(rover);
+    checkLoadingComplete();
   });
 
-  setTimeout(() => {
-    loader.load('/models/Rocketship.glb', gltf => {
-      rocketship = gltf.scene;
-      rocketship.scale.set(3, 3, 3);
-      rocketship.position.set(25, -9, -20);
-      rocketship.rotation.y = Math.PI / 1.5;
-      scene.add(rocketship);
-    });
-  }, 3000);
+  loader.load('/models/Rocketship.glb', gltf => {
+    rocketship = gltf.scene;
+    rocketship.scale.set(3, 3, 3);
+    rocketship.position.set(25, -9, -20);
+    rocketship.rotation.y = Math.PI / 1.5;
+    scene.add(rocketship);
+    checkLoadingComplete();
+  });
 
   loader.load('/animation/Thoughtful Head Nod.glb', idleGltf => {
     astronaut = idleGltf.scene;
     astronaut.scale.set(2, 2, 2);
     astronaut.position.set(walkRadius, -9, 0);
     scene.add(astronaut);
-
     idleMixer = new THREE.AnimationMixer(astronaut);
-    const idleClip = idleGltf.animations[0];
-    idleMixer.clipAction(idleClip).play();
+    idleMixer.clipAction(idleGltf.animations[0]).play();
+    checkLoadingComplete();
 
     loader.load('/animation/Walking.glb', walkGltf => {
       walkMixer = new THREE.AnimationMixer(astronaut);
@@ -153,6 +181,7 @@ loader.load('/models/Floating_Island.glb', gltf => {
       walkClip.tracks = walkClip.tracks.filter(t => !t.name.endsWith('.position'));
       walkMixer.clipAction(walkClip).play();
       walkMixer.clipAction(walkClip).paused = true;
+      checkLoadingComplete();
     });
 
     loader.load('/animation/Petting Animal.glb', petGltf => {
@@ -161,37 +190,118 @@ loader.load('/models/Floating_Island.glb', gltf => {
       const petAction = petMixer.clipAction(petClip);
       petAction.loop = THREE.LoopOnce;
       petAction.clampWhenFinished = true;
-
-      window.addEventListener('keydown', (e) => {
+      window.addEventListener('keydown', e => {
         if (e.key.toLowerCase() === 'c') {
           isPetting = true;
           petAction.reset();
           petAction.play();
         }
       });
+      checkLoadingComplete();
     });
+
+    
+    // ✅ AJOUTE ICI le chargement du waving maintenant que astronaut est défini
+  loader.load('/animation/Waving.glb', wavingGltf => {
+    wavingMixer = new THREE.AnimationMixer(astronaut);
+    const wavingClip = wavingGltf.animations[0];
+    wavingAction = wavingMixer.clipAction(wavingClip);
+    wavingAction.loop = THREE.LoopOnce;
+    wavingAction.clampWhenFinished = true;
+    checkLoadingComplete();
+  });
+
+
+    
   });
 });
 
-function createSmoke(x, y, z) {
-  const geometry = new THREE.SphereGeometry(0.5, 6, 6);
-  const material = new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.6 });
-  const smoke = new THREE.Mesh(geometry, material);
-  smoke.position.set(x, y, z);
-  scene.add(smoke);
-  smokeParticles.push({ mesh: smoke, life: 0 });
-}
 
+// TRAÎNÉE DU X-WING
 const trailPoints = [];
 const trailGeometry = new THREE.BufferGeometry();
 const trailMaterial = new THREE.LineBasicMaterial({ color: 0x00ffff });
 scene.add(new THREE.Line(trailGeometry, trailMaterial));
 
+
 loader.load('/models/x-wing.glb', gltf => {
   xwing = gltf.scene;
   xwing.scale.set(0.6, 0.6, 0.6);
   scene.add(xwing);
+  checkLoadingComplete();
 });
+
+
+
+
+// window.addEventListener('click', (event) => {
+//   if (!rocketship || !astronaut) return;
+
+//   mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+//   mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+//   raycaster.setFromCamera(mouse, camera);
+//   const intersects = raycaster.intersectObjects([rocketship], true);
+
+//   if (intersects.length > 0) {
+//     astronaut.lookAt(camera.position); // L'astronaute regarde la caméra
+//     isLaunching = true;
+//     launchStartTime = performance.now();
+
+//     // Redirection après 3 secondes (suffisant pour voir la fusée décoller)
+//     setTimeout(() => {
+//       window.location.href = 'destination.html';
+//     }, 3000);
+//   }
+// });
+window.addEventListener('click', (event) => {
+  if (!rocketship || !astronaut || !wavingAction) return;
+
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObjects([rocketship], true);
+
+  if (intersects.length > 0) {
+    astronaut.lookAt(camera.position);
+
+    wavingAction.reset().play();
+
+    // Déclenche le décollage 1s après le début du waving
+    setTimeout(() => {
+      isLaunching = true;
+      launchStartTime = performance.now();
+    }, 1000);
+
+    // Redirige 3s après le clic (pour voir l'animation et un peu le décollage)
+    setTimeout(() => {
+      window.location.href = 'destination.html';
+    }, 3000);
+  }
+});
+
+
+
+
+window.addEventListener('click', (event) => {
+  // calculer la position du curseur dans l'espace clip
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObjects([wolf], true);
+
+  if (intersects.length > 0 && astronaut) {
+    targetToReach = new THREE.Vector3(
+      wolf.position.x - 2, // on évite qu'il rentre dedans
+      astronaut.position.y,
+      wolf.position.z - 1
+    );
+    isWalking = true;
+  }
+});
+
 
 window.addEventListener('wheel', (e) => {
   scrollAngle += e.deltaY * 0.0015;
@@ -272,21 +382,43 @@ function animate() {
     trailGeometry.attributes.position.needsUpdate = true;
   }
 
+  
   if (astronaut && idleMixer && walkMixer) {
-    const direction = new THREE.Vector3();
-    let isMoving = false;
+  let isMoving = false;
+  const direction = new THREE.Vector3();
 
-    if (keysPressed.forward) { direction.z -= 1; isMoving = true; }
-    if (keysPressed.backward) { direction.z += 1; isMoving = true; }
-    if (keysPressed.left) { direction.x -= 1; isMoving = true; }
-    if (keysPressed.right) { direction.x += 1; isMoving = true; }
+  if (targetToReach) {
+    direction.subVectors(targetToReach, astronaut.position);
+    const distance = direction.length();
 
-    direction.normalize();
-
-    if (isMoving) {
-      walkMixer.update(delta);
-      astronaut.position.add(direction.clone().multiplyScalar(10 * delta));
+    if (distance > 0.2) {
+      direction.normalize();
+      astronaut.position.add(direction.clone().multiplyScalar(2 * delta));
       astronaut.lookAt(astronaut.position.clone().add(direction));
+      walkMixer.update(delta);
+      walkMixer.clipAction(walkMixer._actions[0]._clip).paused = false;
+      idleMixer.clipAction(idleMixer._actions[0]._clip).paused = true;
+      isMoving = true;
+    } else {
+      // arrivé à destination
+      isWalking = false;
+      targetToReach = null;
+      isPetting = true;
+      petMixer?.clipAction(petMixer._actions[0]._clip)?.reset()?.play();
+    }
+  }
+
+  if (!isMoving) {
+    if (keysPressed.forward || keysPressed.backward || keysPressed.left || keysPressed.right) {
+      direction.set(
+        (keysPressed.right ? 1 : 0) - (keysPressed.left ? 1 : 0),
+        0,
+        (keysPressed.backward ? 1 : 0) - (keysPressed.forward ? 1 : 0)
+      ).normalize();
+
+      astronaut.position.add(direction.clone().multiplyScalar(3 * delta));
+      astronaut.lookAt(astronaut.position.clone().add(direction));
+      walkMixer.update(delta);
       walkMixer.clipAction(walkMixer._actions[0]._clip).paused = false;
       idleMixer.clipAction(idleMixer._actions[0]._clip).paused = true;
     } else {
@@ -295,6 +427,8 @@ function animate() {
       idleMixer.clipAction(idleMixer._actions[0]._clip).paused = false;
     }
   }
+}
+
 
   if (petMixer && isPetting) {
     petMixer.update(delta);
@@ -307,7 +441,9 @@ function animate() {
       rocketship.position.y += 0.3;
     }
     if (elapsed < 2 || (elapsed > 8 && elapsed < 10)) {
-      createSmoke(rocketship.position.x, rocketship.position.y - 5, rocketship.position.z);
+      // createSmoke(rocketship.position.x, rocketship.position.y - 5, rocketship.position.z);
+      // createSmoke(scene, rocketship.position.x, rocketship.position.y - 5, rocketship.position.z);
+      createStylizedSmoke(scene, rocketship.position); // version stylisée
     }
     if (elapsed > 8 && elapsed < 10) {
       rocketship.position.y -= 0.3;
@@ -318,17 +454,11 @@ function animate() {
     }
   }
 
-  smokeParticles.forEach(p => {
-    p.life += delta;
-    p.mesh.material.opacity -= delta * 0.3;
-  });
-  smokeParticles = smokeParticles.filter(p => {
-    if (p.life > 3) {
-      scene.remove(p.mesh);
-      return false;
-    }
-    return true;
-  });
+  if (wavingMixer) {
+    wavingMixer.update(delta);
+  }
+  
+
 
   renderer.render(scene, camera);
 }
